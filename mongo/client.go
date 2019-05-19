@@ -115,6 +115,7 @@ func NewClientFromDeployment(deployment driver.Deployment, opts ...*options.Clie
 	}
 
 	client.deployment = deployment
+	client.sessionPool = session.NewPool(nil)
 	return client, nil
 }
 

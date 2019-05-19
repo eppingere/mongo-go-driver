@@ -8,6 +8,11 @@ package mongo
 
 import (
 	"context"
+	"github.com/stretchr/testify/require"
+	"go.mongodb.org/mongo-driver/internal/testutil"
+	"go.mongodb.org/mongo-driver/x/bsonx"
+	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,6 +37,16 @@ func ExampleClient_Connect() {
 	}
 
 	return
+}
+
+type testDialer struct {
+	called int32
+	d      Dialer
+}
+
+func (td *testDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	atomic.AddInt32(&td.called, 1)
+	return td.d.DialContext(ctx, network, address)
 }
 
 func TestClient(t *testing.T) {
@@ -94,6 +109,21 @@ func TestClient(t *testing.T) {
 		want, got := bson.RawValue{Type: wantT, Value: wantData}, bson.RawValue{Type: gotT, Value: gotData}
 		if !got.Equal(want) {
 			t.Errorf("Couldn't configure WriteConcern. got %v; want %v", got, want)
+		}
+	})
+	t.Run("Can configure Dialer", func(t *testing.T) {
+		td := &testDialer{d: &net.Dialer{}}
+		cs := testutil.ConnString(t)
+		opts := options.Client().ApplyURI(cs.String()).SetDialer(td)
+		client, err := NewClient(opts)
+		require.NoError(t, err)
+		err = client.Connect(context.Background())
+		require.NoError(t, err)
+		_, err = client.ListDatabases(context.Background(), bsonx.Doc{})
+		require.NoError(t, err)
+		got := atomic.LoadInt32(&td.called)
+		if got < 1 {
+			t.Errorf("Custom dialer was not used when dialing new connections")
 		}
 	})
 }
