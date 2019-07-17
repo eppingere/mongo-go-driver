@@ -3,6 +3,7 @@ package mtest
 import (
 	"context"
 	"fmt"
+	"go.mongodb.org/mongo-driver/internal/testutil/assert"
 	"math"
 	"strconv"
 	"strings"
@@ -51,15 +52,15 @@ type FailPointMode struct {
 
 // FailPointData is a representation of the FailPoint.Data field.
 type FailPointData struct {
-	FailCommands                  []string `json:"failCommands" bson:"failCommands"`
-	CloseConnection               bool     `json:"closeConnection" bson:"closeConnection"`
-	ErrorCode                     int32    `json:"errorCode" bson:"errorCode"`
-	FailBeforeCommitExceptionCode int32    `json:"failBeforeCommitExceptionCode" bson:"failBeforeCommitExceptionCode"`
+	FailCommands                  []string `json:"failCommands" bson:"failCommands,omitempty"`
+	CloseConnection               bool     `json:"closeConnection" bson:"closeConnection,omitempty"`
+	ErrorCode                     int32    `json:"errorCode" bson:"errorCode,omitempty"`
+	FailBeforeCommitExceptionCode int32    `json:"failBeforeCommitExceptionCode" bson:"failBeforeCommitExceptionCode,omitempty"`
 	WriteConcernError             *struct {
 		Code   int32  `json:"code" bson:"code"`
 		Name   string `json:"codeName" bson:"codeName"`
 		Errmsg string `json:"errmsg" bson:"errmsg"`
-	} `json:"writeConcernError" bson:"writeConcernError"`
+	} `json:"writeConcernError" bson:"writeConcernError,omitempty"`
 }
 
 // T is a wrapper around testing.T.
@@ -73,6 +74,7 @@ type T struct {
 	mockResponses []bson.D
 	createdColls []*mongo.Collection // collections created in this test
 	dbName, collName string
+	failPointNames []string
 
 	// options copied to sub-tests
 	clientType   ClientType
@@ -82,9 +84,9 @@ type T struct {
 	baseOpts *Options // used to create subtests
 
 	// command monitoring channels
-	started chan *event.CommandStartedEvent
-	succeeded chan *event.CommandSucceededEvent
-	failed chan *event.CommandFailedEvent
+	started []*event.CommandStartedEvent
+	succeeded []*event.CommandSucceededEvent
+	failed []*event.CommandFailedEvent
 
 	Client *mongo.Client
 	Coll   *mongo.Collection
@@ -117,32 +119,42 @@ func New(wrapped *testing.T, opts ...*Options) *T {
 	if t.dbName == "" {
 		t.dbName = TestDb
 	}
+	t.collName = sanitizeCollectionName(t.dbName, t.collName)
+	return t
+}
 
-	// create client/collection if necessary
-	if t.createClient != nil && !*t.createClient {
-		return t
+func sanitizeCollectionName(kind string, name string) string {
+	// Collections can't have "$" in their names, so we substitute it with "%".
+	name = strings.Replace(name, "$", "%", -1)
+
+	// Namespaces can only have 120 bytes max.
+	if len(kind+"."+name) >= 119 {
+		name = name[:119-len(kind+".")]
 	}
 
+	return name
+}
+
+func (t *T) createClientAndCollection() {
 	clientOpts := t.clientOpts
 	if clientOpts == nil {
 		// default opts
 		clientOpts = options.Client().SetWriteConcern(MajorityWc).SetReadPreference(PrimaryRp).SetReadConcern(MajorityRc)
 	}
 	// command monitor
-	t.started = make(chan *event.CommandStartedEvent, 50)
-	t.succeeded = make(chan *event.CommandSucceededEvent, 50)
-	t.failed = make(chan *event.CommandFailedEvent, 50)
 	clientOpts.SetMonitor(&event.CommandMonitor{
 		Started: func(_ context.Context, cse *event.CommandStartedEvent) {
-			t.started <- cse
+			t.started = append(t.started, cse)
 		},
 		Succeeded: func(_ context.Context, cse *event.CommandSucceededEvent) {
-			t.succeeded <- cse
+			t.succeeded = append(t.succeeded, cse)
 		},
 		Failed: func(_ context.Context, cfe *event.CommandFailedEvent) {
-			t.failed <- cfe
+			t.failed = append(t.failed, cfe)
 		},
 	})
+
+	var err error
 	switch t.clientType {
 	case Default:
 		clientOpts.ApplyURI(testContext.connString.Original)
@@ -163,7 +175,8 @@ func New(wrapped *testing.T, opts ...*Options) *T {
 	}
 
 	t.Coll = t.Client.Database(t.dbName).Collection(t.collName, t.collOpts)
-	return t
+	t.createdColls = t.createdColls[:0]
+	t.createdColls = append(t.createdColls, t.Coll)
 }
 
 // Run creates a new T instance for a sub-test and runs the given callback. It also creates a new collection using the
@@ -188,11 +201,14 @@ func (t *T) RunOpts(name string, opts *Options, callback func(*T)) {
 					return
 				}
 
+				sub.ClearCollections()
+				sub.ClearFailPoints()
 				_ = sub.Client.Disconnect(Background)
-				for _, coll := range sub.createdColls {
-					_ = coll.Drop(Background)
-				}
 			}()
+		}
+
+		if sub.createClient == nil || *sub.createClient {
+			sub.createClientAndCollection()
 		}
 
 		// add any mock responses for this test
@@ -218,55 +234,79 @@ func (t *T) ClearMockResponses() {
 // GetStartedEvent returns the most recent CommandStartedEvent, or nil if one is not present.
 // This can only be called once per event.
 func (t *T) GetStartedEvent() *event.CommandStartedEvent {
-	select {
-	case e := <-t.started:
-		return e
-	default:
+	if len(t.started) == 0 {
 		return nil
 	}
+	e := t.started[0]
+	t.started = t.started[1:]
+	return e
 }
 
 // GetSucceededEvent returns the most recent CommandSucceededEvent, or nil if one is not present.
 // This can only be called once per event.
 func (t *T) GetSucceededEvent() *event.CommandSucceededEvent {
-	select {
-	case e := <-t.succeeded:
-		return e
-	default:
+	if len(t.succeeded) == 0 {
 		return nil
 	}
+	e := t.succeeded[0]
+	t.succeeded = t.succeeded[1:]
+	return e
 }
 
 // GetFailedEvent returns the most recent CommandFailedEvent, or nil if one is not present.
 // This can only be called once per event.
 func (t *T) GetFailedEvent() *event.CommandFailedEvent {
-	select {
-	case e := <-t.failed:
-		return e
-	default:
+	if len(t.failed) == 0 {
 		return nil
 	}
+	e := t.failed[0]
+	t.failed = t.failed[1:]
+	return e
+}
+
+// GetAllStartedEvents returns a slice of all CommandStartedEvent instances for this test. This can be called multiple
+// times.
+func (t *T) GetAllStartedEvents() []*event.CommandStartedEvent {
+	return t.started
+}
+
+// GetAllSucceededEvents returns a slice of all CommandSucceededEvent instances for this test. This can be called multiple
+// times.
+func (t *T) GetAllSucceededEvents() []*event.CommandSucceededEvent {
+	return t.succeeded
+}
+
+// GetAllFailedEvents returns a slice of all CommandFailedEvent instances for this test. This can be called multiple
+// times.
+func (t *T) GetAllFailedEvents() []*event.CommandFailedEvent {
+	return t.failed
 }
 
 // ClearEvents clears the existing command monitoring events.
 func (t *T) ClearEvents() {
-	for len(t.started) > 0 {
-		<-t.started
+	t.started = t.started[:0]
+	t.succeeded = t.succeeded[:0]
+	t.failed = t.failed[:0]
+}
+
+// ResetClient resets the existing client with the given options. If opts is nil, the existing options will be used.
+// If t.Coll is not-nil, it will be reset to use the new client. Should only be called if the existing client is
+// not nil. This will Disconnect the existing client but will not drop existing collections. To do so, ClearCollections
+// must be called before calling ResetClient.
+func (t *T) ResetClient(opts *options.ClientOptions) {
+	if opts != nil {
+		t.clientOpts = opts
 	}
-	for len(t.succeeded) > 0 {
-		<-t.succeeded
-	}
-	for len(t.failed) > 0 {
-		<-t.failed
-	}
+
+	_ = t.Client.Disconnect(Background)
+	t.createClientAndCollection()
 }
 
 // CreateCollection creates a new collection with the given options. The collection will be dropped after the test
-// finishes running. The function ensures that the collection has been created server-side by running the create
-// command. The create command will appear in command monitoring channels. This function should be called after
-// CreateClient.
-func (t *T) CreateCollection(name string, opts ...*options.CollectionOptions) *mongo.Collection {
-	if t.clientType != Mock {
+// finishes running. If createOnServer is true, the function ensures that the collection has been created server-side
+// by running the create command. The create command will appear in command monitoring channels.
+func (t *T) CreateCollection(name string, createOnServer bool, opts ...*options.CollectionOptions) *mongo.Collection {
+	if createOnServer && t.clientType != Mock {
 		cmd := bson.D{{"create", name}}
 		if err := t.Client.Database(t.dbName).RunCommand(Background, cmd).Err(); err != nil {
 			// ignore NamespaceExists errors for idempotency
@@ -283,8 +323,16 @@ func (t *T) CreateCollection(name string, opts ...*options.CollectionOptions) *m
 	return coll
 }
 
+// ClearCollections drops all collections previously created by this test.
+func (t *T) ClearCollections() {
+	for _, coll := range t.createdColls {
+		_ = coll.Drop(Background)
+	}
+	t.createdColls = t.createdColls[:0]
+}
+
 // SetFailPoint sets a fail point for the client associated with T. Commands to create the failpoint will appear
-// in command monitoring channels.
+// in command monitoring channels. The fail point will automatically be disabled after this test has run.
 func (t *T) SetFailPoint(fp FailPoint) {
 	// ensure mode fields are int32
 	if modeMap, ok := fp.Mode.(map[string]interface{}); ok {
@@ -309,6 +357,23 @@ func (t *T) SetFailPoint(fp FailPoint) {
 	if err := admin.RunCommand(Background, fp).Err(); err != nil {
 		t.Fatalf("error creating fail point on server: %v", err)
 	}
+	t.failPointNames = append(t.failPointNames, fp.ConfigureFailPoint)
+}
+
+// ClearFailPoints disables all previously set failpoints for this test.
+func (t *T) ClearFailPoints() {
+	db := t.Client.Database("admin")
+	for _, fp := range t.failPointNames {
+		cmd := bson.D{
+			{"configureFailPoint", fp},
+			{"mode", "off"},
+		}
+		err := db.RunCommand(Background, cmd).Err()
+		if err != nil {
+			t.Fatalf("error clearing fail point %s: %v", fp, err)
+		}
+	}
+	t.failPointNames = t.failPointNames[:0]
 }
 
 // AuthEnabled returns whether or not this test is running in an environment with auth.
@@ -324,6 +389,13 @@ func (t *T) TopologyKind() TopologyKind {
 // ConnString returns the connection string used to create the client for this test.
 func (t *T) ConnString() string {
 	return testContext.connString.Original
+}
+
+// CloneCollection modifies the default collection for this test to match the given options.
+func (t *T) CloneCollection(opts *options.CollectionOptions) {
+	var err error
+	t.Coll, err = t.Coll.Clone(opts)
+	assert.Nil(t, err, "error cloning collection: %v", err)
 }
 
 // compareVersions compares two version number strings (i.e. positive integers separated by

@@ -35,6 +35,24 @@ func Equal(t Tester, expected, actual interface{}, msgAndArgs ...interface{}) {
 	t.Fatalf(msg, args...)
 }
 
+// NotEqual compares expected and actual for inequality.
+func NotEqual(t Tester, expected, actual interface{}, msgAndArgs ...interface{}) {
+	if h, ok := t.(Helper); ok {
+		h.Helper()
+	}
+
+	if !reflect.DeepEqual(expected, actual) {
+		return
+	}
+
+	msg, args := separateMsgAndArgs(msgAndArgs)
+	if msg == "" {
+		msg = "expected %v to not equal actual"
+		args = []interface{}{expected}
+	}
+	t.Fatalf(msg, args...)
+}
+
 // True asserts that the actual parameter is true.
 func True(t Tester, actual interface{}, msgAndArgs ...interface{}) {
 	if h, ok := t.(Helper); ok {

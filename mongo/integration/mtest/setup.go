@@ -82,6 +82,16 @@ func Setup() error {
 		testContext.topoKind = Sharded
 	}
 
+	if testContext.topoKind == ReplicaSet {
+		err = testContext.client.Database("admin").RunCommand(Background, bson.D{
+			{"setParameter", 1},
+			{"transactionLifetimeLimitSeconds", 3},
+		}).Err()
+		if err != nil {
+			return err
+		}
+	}
+
 	testContext.authEnabled = len(os.Getenv("MONGO_GO_DRIVER_CA_FILE")) != 0
 	return nil
 }

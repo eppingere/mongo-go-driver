@@ -20,6 +20,9 @@ import (
 	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
 )
 
+// NoErr
+var NoErr = noerr
+
 func noerr(t *testing.T, err error) {
 	if err != nil {
 		t.Helper()
