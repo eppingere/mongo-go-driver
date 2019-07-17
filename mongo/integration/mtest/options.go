@@ -75,6 +75,22 @@ func (op *Options) CreateClient(create bool) *Options {
 	return op
 }
 
+//CollectionName
+func (op *Options) CollectionName(collName string) *Options {
+	op.optFuncs = append(op.optFuncs, func(t *T) {
+		t.collName = collName
+	})
+	return op
+}
+
+//DatabaseName
+func (op *Options) DatabaseName(dbName string) *Options {
+	op.optFuncs = append(op.optFuncs, func(t *T) {
+		t.dbName = dbName
+	})
+	return op
+}
+
 // ClientType specifies the type of client that should be created for a test. This option will be propagated to all
 // sub-tests.
 func (op *Options) ClientType(ct ClientType) *Options {

@@ -72,6 +72,7 @@ type T struct {
 	mockDeployment *mockDeployment // nil if the test is not being run against a mock
 	mockResponses []bson.D
 	createdColls []*mongo.Collection // collections created in this test
+	dbName, collName string
 
 	// options copied to sub-tests
 	clientType   ClientType
@@ -110,6 +111,12 @@ func New(wrapped *testing.T, opts ...*Options) *T {
 
 	// create a set of base options for sub-tests
 	t.baseOpts = NewOptions().ClientOptions(t.clientOpts).CollectionOptions(t.collOpts).ClientType(t.clientType)
+	if t.collName == "" {
+		t.collName = t.Name()
+	}
+	if t.dbName == "" {
+		t.dbName = TestDb
+	}
 
 	// create client/collection if necessary
 	if t.createClient != nil && !*t.createClient {
@@ -155,7 +162,7 @@ func New(wrapped *testing.T, opts ...*Options) *T {
 		t.Fatalf("error connecting client: %v", err)
 	}
 
-	t.Coll = t.Client.Database(TestDb).Collection(t.Name(), t.collOpts)
+	t.Coll = t.Client.Database(t.dbName).Collection(t.collName, t.collOpts)
 	return t
 }
 
@@ -261,7 +268,7 @@ func (t *T) ClearEvents() {
 func (t *T) CreateCollection(name string, opts ...*options.CollectionOptions) *mongo.Collection {
 	if t.clientType != Mock {
 		cmd := bson.D{{"create", name}}
-		if err := t.Client.Database(TestDb).RunCommand(Background, cmd).Err(); err != nil {
+		if err := t.Client.Database(t.dbName).RunCommand(Background, cmd).Err(); err != nil {
 			// ignore NamespaceExists errors for idempotency
 
 			cmdErr, ok := err.(mongo.CommandError)
@@ -271,7 +278,7 @@ func (t *T) CreateCollection(name string, opts ...*options.CollectionOptions) *m
 		}
 	}
 
-	coll := t.Client.Database(TestDb).Collection(name, opts...)
+	coll := t.Client.Database(t.dbName).Collection(name, opts...)
 	t.createdColls = append(t.createdColls, coll)
 	return coll
 }
@@ -307,6 +314,11 @@ func (t *T) SetFailPoint(fp FailPoint) {
 // AuthEnabled returns whether or not this test is running in an environment with auth.
 func (t *T) AuthEnabled() bool {
 	return testContext.authEnabled
+}
+
+// TopologyKind returns the topology kind of the environment
+func (t *T) TopologyKind() TopologyKind {
+	return testContext.topoKind
 }
 
 // ConnString returns the connection string used to create the client for this test.
