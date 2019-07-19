@@ -22,6 +22,10 @@ import (
 	"go.mongodb.org/mongo-driver/x/bsonx"
 )
 
+const (
+	errInteruptedErrCode int32 = 11601
+)
+
 // findJSONFilesInDir finds the JSON files in a directory.
 func findJSONFilesInDir(t *testing.T, dir string) []string {
 	t.Helper()
@@ -46,7 +50,12 @@ func killSessions(mt *mtest.T) {
 	err := mt.Client.Database("admin").RunCommand(mtest.Background, bson.D{
 		{"killAllSessions", bson.A{}},
 	}, options.RunCmd().SetReadPreference(mtest.PrimaryRp)).Err()
-	assert.Nil(mt, err, "unable to killAllSessions: %v", err)
+	if err == nil {
+		return
+	}
+	if cmdErr, ok := err.(mongo.CommandError); !ok || cmdErr.Code != errInteruptedErrCode {
+		mt.Fatalf("unable to killAllSessions: %v", err)
+	}
 }
 
 func distinctWorkaround(mt *mtest.T, db, coll string) {

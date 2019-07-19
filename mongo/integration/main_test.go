@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"log"
 	"os"
 	"testing"
 
@@ -9,10 +10,10 @@ import (
 
 func TestMain(m *testing.M) {
 	if err := mtest.Setup(); err != nil {
-		os.Exit(1)
+		log.Fatal(err)
 	}
 	defer os.Exit(m.Run())
 	if err := mtest.Teardown(); err != nil {
-		os.Exit(1)
+		log.Fatal(err)
 	}
 }

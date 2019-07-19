@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"go.mongodb.org/mongo-driver/internal/testutil/assert"
-	"math"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -398,41 +396,11 @@ func (t *T) CloneCollection(opts *options.CollectionOptions) {
 	assert.Nil(t, err, "error cloning collection: %v", err)
 }
 
-// compareVersions compares two version number strings (i.e. positive integers separated by
-// periods). Comparisons are done to the lesser precision of the two versions. For example, 3.2 is
-// considered equal to 3.2.11, whereas 3.2.0 is considered less than 3.2.11.
-//
-// Returns a positive int if version1 is greater than version2, a negative int if version1 is less
-// than version2, and 0 if version1 is equal to version2.
-func (t *T) compareVersions(v1 string, v2 string) int {
-	n1 := strings.Split(v1, ".")
-	n2 := strings.Split(v2, ".")
-
-	for i := 0; i < int(math.Min(float64(len(n1)), float64(len(n2)))); i++ {
-		i1, err := strconv.Atoi(n1[i])
-		if err != nil {
-			return 1
-		}
-
-		i2, err := strconv.Atoi(n2[i])
-		if err != nil {
-			return -1
-		}
-
-		difference := i1 - i2
-		if difference != 0 {
-			return difference
-		}
-	}
-
-	return 0
-}
-
 func (t *T) matchesConstraint(rob RunOnBlock) (bool, error) {
-	if rob.MinServerVersion != "" && t.compareVersions(testContext.serverVersion, rob.MinServerVersion) < 0 {
+	if rob.MinServerVersion != "" && compareVersions(testContext.serverVersion, rob.MinServerVersion) < 0 {
 		return false, nil
 	}
-	if rob.MaxServerVersion != "" && t.compareVersions(testContext.serverVersion, rob.MaxServerVersion) > 0 {
+	if rob.MaxServerVersion != "" && compareVersions(testContext.serverVersion, rob.MaxServerVersion) > 0 {
 		return false, nil
 	}
 	if rob.MinWireVersion != 0 || rob.MaxWireVersion != 0 {
