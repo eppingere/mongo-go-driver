@@ -66,9 +66,10 @@ func TestChangeStream(t *testing.T) {
 		assert.Nil(mt, err, "error creating change stream: %v", err)
 		defer closeStream(cs)
 
-		generateEvents(mt, 1)
+		ensureResumeToken(mt, cs)
 		// kill cursor to force resumable error
 		killChangeStreamCursor(mt, cs)
+		generateEvents(mt, 1)
 
 		mt.ClearEvents()
 		// change stream should resume once and get new change
@@ -283,9 +284,11 @@ func TestChangeStream(t *testing.T) {
 
 			noPbrtOpts := mtest.NewOptions().Constraints(mtest.RunOnBlock{
 				MaxServerVersion: "4.0.6",
-			}).CreateClient(false)
+			})
 			mt.RunOpts("without PBRT support", noPbrtOpts, func(mt *mtest.T) {
-				cs, err := mt.Coll.Database().Watch(mtest.Background, mongo.Pipeline{})
+				collName := mt.Coll.Name()
+				cs, err := mt.Coll.Watch(mtest.Background, mongo.Pipeline{})
+
 				assert.Nil(mt, err, "error creating change stream: %v", err)
 				defer closeStream(cs)
 
@@ -293,7 +296,7 @@ func TestChangeStream(t *testing.T) {
 				numEvents := 5
 				generateEvents(mt, numEvents)
 				// iterate once to get a resume token
-				assert.Equal(mt, cs.Next(mtest.Background), "expected Next to return true but got false")
+				assert.True(mt, cs.Next(mtest.Background), "expected Next to return true but got false")
 				token := cs.ResumeToken()
 				assert.NotNil(mt, token, "expected resume token but got nil")
 
@@ -309,7 +312,8 @@ func TestChangeStream(t *testing.T) {
 				}
 				for _, tc := range testCases {
 					mt.Run(tc.name, func(mt *mtest.T) {
-						cs, err := mt.Coll.Database().Watch(mtest.Background, mongo.Pipeline{}, tc.opts)
+						coll := mt.CreateCollection(collName, false)
+						cs, err := coll.Watch(mtest.Background, mongo.Pipeline{}, tc.opts)
 						assert.Nil(mt, err, "error creating change stream: %v", err)
 						defer closeStream(cs)
 
@@ -369,4 +373,13 @@ func compareResumeTokens(mt *mtest.T, cs *mongo.ChangeStream, expected bson.Raw)
 	mt.Helper()
 	assert.Equal(mt, expected, cs.ResumeToken(),
 		"resume token mismatch; expected %v, got %v", expected, cs.ResumeToken())
+}
+
+func ensureResumeToken(mt *mtest.T, cs *mongo.ChangeStream) {
+	mt.Helper()
+	_, err := mt.Coll.InsertOne(mtest.Background, bson.D{
+		{"ensureResumeToken", 1},
+	})
+	assert.Nil(mt, err, "unable to insert document: %v", err)
+	assert.True(mt, cs.Next(mtest.Background), "expected cs.Next to return true, but got false")
 }

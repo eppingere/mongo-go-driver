@@ -412,13 +412,10 @@ func setupSessions(mt *mtest.T, test testCase) (mongo.Session, mongo.Session) {
 
 func setupCollection(mt *mtest.T, testFile testFile) {
 	mt.Helper()
-	insertColl, err := mt.Coll.Clone(options.Collection().SetWriteConcern(mtest.MajorityWc))
-	assert.Nil(mt, err, "unable to clone collection: %v", err)
-	err = insertColl.Database().RunCommand(mtest.Background, bson.D{{"create", insertColl.Name()}}).Err()
-	assert.Nil(mt, err, "error creating collection: %v", err)
-
 	docsToInsert := docSliceToInterfaceSlice(docSliceFromRaw(mt, testFile.Data))
 	if len(docsToInsert) > 0{
+		insertColl, err := mt.Coll.Clone(options.Collection().SetWriteConcern(mtest.MajorityWc))
+		assert.Nil(mt, err, "unable to clone collection: %v", err)
 		_, err = insertColl.InsertMany(mtest.Background, docsToInsert)
 		assert.Nil(mt, err, "unable to insert documents into collection: %v", err)
 	}

@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"go.mongodb.org/mongo-driver/mongo/readconcern"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"testing"
 
@@ -204,7 +205,8 @@ func checkReadConcern(mt *mtest.T, cmd bson.Raw, levelIncluded bool, expectedLev
 
 
 func TestCausalConsistency(t *testing.T) {
-	mt := mtest.New(t, mtest.NewOptions().CreateClient(false))
+	clientOpts := options.Client().SetReadConcern(mtest.LocalRc)
+	mt := mtest.New(t, mtest.NewOptions().CreateClient(false).ClientOptions(clientOpts))
 
 	mt.RunOpts("with consistency", consistencySupported.CreateClient(false), func(mt *mtest.T) {
 		mt.Run("initial optime nil", func(mt *mtest.T) {
@@ -340,7 +342,9 @@ func TestCausalConsistency(t *testing.T) {
 			started := mt.GetStartedEvent().Command
 			checkReadConcern(mt, started, false, "", true, currOptime)
 		})
-		mt.Run("non-default read concern", func(mt *mtest.T) {
+		majorityRc := readconcern.Majority()
+		majorityRcCollOpts := options.Collection().SetReadConcern(majorityRc)
+		mt.RunOpts("non-default read concern", mtest.NewOptions().CollectionOptions(majorityRcCollOpts), func(mt *mtest.T) {
 			// When using a custom ReadConcern the readConcern field in the command sent to the server should be a
 			// merger of the ReadConcern value and the afterClusterTime field
 

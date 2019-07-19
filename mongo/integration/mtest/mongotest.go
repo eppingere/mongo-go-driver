@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"go.mongodb.org/mongo-driver/internal/testutil/assert"
+	"go.mongodb.org/mongo-driver/mongo/readconcern"
 	"strings"
 	"testing"
 
@@ -11,7 +12,6 @@ import (
 	"go.mongodb.org/mongo-driver/event"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/readconcern"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.mongodb.org/mongo-driver/mongo/writeconcern"
 	"go.mongodb.org/mongo-driver/x/mongo/driver/description"
@@ -24,8 +24,8 @@ var (
 	MajorityWc = writeconcern.New(writeconcern.WMajority())
 	// PrimaryRp is the primary read preference.
 	PrimaryRp = readpref.Primary()
-	// MajorityRc is the majority read concern.
-	MajorityRc = readconcern.Majority()
+	// LocalRc is the local read concern
+	LocalRc = readconcern.Local()
 )
 
 const (
@@ -137,7 +137,7 @@ func (t *T) createClientAndCollection() {
 	clientOpts := t.clientOpts
 	if clientOpts == nil {
 		// default opts
-		clientOpts = options.Client().SetWriteConcern(MajorityWc).SetReadPreference(PrimaryRp).SetReadConcern(MajorityRc)
+		clientOpts = options.Client().SetWriteConcern(MajorityWc).SetReadPreference(PrimaryRp)
 	}
 	// command monitor
 	clientOpts.SetMonitor(&event.CommandMonitor{
@@ -172,9 +172,8 @@ func (t *T) createClientAndCollection() {
 		t.Fatalf("error connecting client: %v", err)
 	}
 
-	t.Coll = t.Client.Database(t.dbName).Collection(t.collName, t.collOpts)
 	t.createdColls = t.createdColls[:0]
-	t.createdColls = append(t.createdColls, t.Coll)
+	t.Coll = t.CreateCollection(t.collName, true, t.collOpts)
 }
 
 // Run creates a new T instance for a sub-test and runs the given callback. It also creates a new collection using the
@@ -214,6 +213,7 @@ func (t *T) RunOpts(name string, opts *Options, callback func(*T)) {
 			sub.AddMockResponses(sub.mockResponses...)
 		}
 
+		sub.ClearEvents()
 		callback(sub)
 	})
 }
